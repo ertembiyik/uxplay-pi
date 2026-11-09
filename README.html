@@ -1005,7 +1005,10 @@ working). Use option <code>-p2p</code>, which acts as if the option
 previously authenticated with UxPlay by pin. After the first time a pin
 authentication has been done, a client will not need to authenticate
 again, unless the UxPlay deviceID is changed. (To set a fixed non-random
-pin as e.g. 3939, use the combination <code>-p2p -pin 3939</code>.)</p>
+pin as e.g. 3939, use the combination <code>-p2p -pin 3939</code>.)
+An effective <code>-pw</code> setting is incompatible with
+<code>-p2p</code>, including when the options are split between the
+startup file and the command line.</p>
 <h2
 id="building-uxplay-on-microsoft-windows-using-msys2-with-the-mingw-64-compiler.">Building
 UxPlay on Microsoft Windows, using MSYS2 with the MinGW-64

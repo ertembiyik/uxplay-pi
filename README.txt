@@ -1036,6 +1036,8 @@ pin. After the first time a pin authentication has been done, a client
 will not need to authenticate again, unless the UxPlay deviceID is
 changed. (To set a fixed non-random pin as e.g. 3939, use the
 combination `-p2p -pin 3939`.)
+An effective `-pw` setting is incompatible with `-p2p`, including when
+the options are split between the startup file and the command line.
 
 ## Building UxPlay on Microsoft Windows, using MSYS2 with the MinGW-64 compiler.
 

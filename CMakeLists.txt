@@ -5,6 +5,18 @@ project( uxplay )
 include(CTest)
 option(ENABLE_ASAN "Enable AddressSanitizer for memory debugging" OFF)
 
+if (ENABLE_ASAN)
+  message(STATUS "Building with AddressSanitizer and UndefinedBehaviorSanitizer")
+  add_compile_options(-O0 -g -fsanitize=address,undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+else()
+  get_property(build_type_help CACHE CMAKE_BUILD_TYPE PROPERTY HELPSTRING)
+  if (build_type_help STREQUAL "Forced Debug mode for ASan/UBSan safety" AND
+      "${CMAKE_C_FLAGS};${CMAKE_CXX_FLAGS};${CMAKE_EXE_LINKER_FLAGS};${CMAKE_SHARED_LINKER_FLAGS}" MATCHES "-fsanitize=address,undefined")
+    message(FATAL_ERROR "A previous ENABLE_ASAN configuration left sanitizer flags in the cache. Configure a fresh build directory.")
+  endif()
+endif()
+
 
 message( STATUS "Project name: " ${PROJECT_NAME} )
 
@@ -105,66 +117,6 @@ if (BUILD_TESTING)
   target_include_directories(test_event_requests PRIVATE lib)
   target_link_libraries(test_event_requests airplay)
   add_test(NAME event_requests COMMAND test_event_requests)
-endif()
-
-if (ENABLE_ASAN)
-    message(STATUS ">>> FORCING SYSTEM-WIDE UNOPTIMIZED (-O0) ASAN + UBSAN SANITIZER BLOCKS <<<")
-
-    # 1. Force the global CMake build configuration profile to Debug
-    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Forced Debug mode for ASan/UBSan safety" FORCE)
-
-    # 2. Clean out project-level internal logging or display variables if they exist
-    if(CMAKE_CFLAGS)
-        string(REPLACE "-O3" "-O0" CMAKE_CFLAGS "${CMAKE_CFLAGS}")
-        string(REPLACE "-O2" "-O0" CMAKE_CFLAGS "${CMAKE_CFLAGS}")
-        string(REPLACE "-march=native" "" CMAKE_CFLAGS "${CMAKE_CFLAGS}")
-        set(CMAKE_CFLAGS "${CMAKE_CFLAGS} -fsanitize=address,undefined -fno-omit-frame-pointer -g" CACHE STRING "" FORCE)
-    endif()
-
-    # 3. Override standard global flag variables to ensure -O0 takes precedence
-    set(CMAKE_C_FLAGS "-O0 -fsanitize=address,undefined -fno-omit-frame-pointer -g" CACHE STRING "" FORCE)
-    set(CMAKE_CXX_FLAGS "-O0 -fsanitize=address,undefined -fno-omit-frame-pointer -g" CACHE STRING "" FORCE)
-
-    # 4. Force the global linker toolchain to link the runtime sanitizer engines
-    set(CMAKE_EXE_LINKER_FLAGS "-fsanitize=address,undefined" CACHE STRING "" FORCE)
-    set(CMAKE_SHARED_LINKER_FLAGS "-fsanitize=address,undefined" CACHE STRING "" FORCE)
-
-    # 5. Intercept and override compilation variables directly on all sub-targets
-    foreach(target playfair dnssd llhttp airplay renderers uxplay)
-        if(TARGET ${target})
-            target_compile_options(${target} PRIVATE -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -g)
-            target_link_options(${target} PRIVATE -fsanitize=address,undefined)
-        endif()
-    endforeach()
-
-    # Define the optimal diagnostic string for runtime execution
-    # Added print_stacktrace=1 for UBSan to print clear code traces on undefined behavior
-    set(ASAN_MAX_OPTIONS "detect_leaks=1:malloc_context_size=50:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1")
-    set(UBSAN_MAX_OPTIONS "print_stacktrace=1")
-
-    # 6. Automatically inject settings for ctest (if unit tests are used)
-    set_property(DIRECTORY PROPERTY TEST_ENVIRONMENT 
-        "ASAN_OPTIONS=${ASAN_MAX_OPTIONS}"
-        "UBSAN_OPTIONS=${UBSAN_MAX_OPTIONS}"
-    )
-
-    message(STATUS "---------------------------------------------------------------------")
-    message(STATUS " ASAN + UBSAN RUNTIME INSTRUCTIONS:")
-    message(STATUS " To run your compiled uxplay binary manually with maximum diagnostics,")
-    message(STATUS " copy and paste some or all of the following command into your terminal execution shell:")
-    message(STATUS " ")
-    message(STATUS "   export ASAN_OPTIONS=${ASAN_MAX_OPTIONS}")
-    message(STATUS "   export UBSAN_OPTIONS=${UBSAN_MAX_OPTIONS}")
-    message(STATUS "   ./uxplay [your normal options]")
-    message(STATUS " ")
-    message(STATUS " (Alternatively, combine them into a single-line command:) ")
-    message(STATUS "   ASAN_OPTIONS=${ASAN_MAX_OPTIONS} UBSAN_OPTIONS=${UBSAN_MAX_OPTIONS} ./uxplay")
-    message(STATUS "---------------------------------------------------------------------")
-else()
-    message(STATUS "---------------------------------------------------------------------")
-    message(STATUS " for debug builds with address and undefined variable checks (ASAN/UBSAN) use:")
-    message(STATUS "         cmake -DENABLE_ASAN=1 ")
-    message(STATUS "---------------------------------------------------------------------")
 endif()
 
 
