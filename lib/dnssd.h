@@ -46,9 +46,12 @@ typedef struct dnssd_s {
     uint32_t features2;
 
     unsigned char pin_pw;
-    int peer_to_peer;
-
     void *dnssd_private;
+  
+/* p2p support (macOS only) */
+#if defined(__APPLE__) && defined(UXPLAY_HAVE_APPLE_P2P)
+    int peer_to_peer;
+#endif
 } dnssd_t;
 
 void *dnssd_private_init(dnssd_t *dnssd_public, int *error);
@@ -68,11 +71,27 @@ DNSSD_API const char *dnssd_get_airplay_txt(dnssd_t *dnssd, int *length);
 DNSSD_API const char *dnssd_get_name(dnssd_t *dnssd, int *length);
 DNSSD_API const char *dnssd_get_hw_addr(dnssd_t *dnssd, int *length);
 DNSSD_API void dnssd_set_airplay_features(dnssd_t *dnssd, int bit, int val);
-DNSSD_API void dnssd_set_peer_to_peer(dnssd_t *dnssd, int enabled);
 DNSSD_API uint64_t dnssd_get_airplay_features(dnssd_t *dnssd);
 DNSSD_API void dnssd_set_pk(dnssd_t *dnssd, char * pk_str);
 
+/* An external dns_sd.h library (Avahi's compat layer, Bonjour) hands each
+   registered service a socket that the application must service with
+   DNSServiceProcessResult() whenever it is readable; otherwise the library never
+   reads its daemon connection and the messages queue up in the daemon (for Avahi,
+   in the system dbus-daemon, without bound). DNSSD_SERVICE_RAOP / _AIRPLAY select
+   the service. dnssd_get_service_fd() returns -1 when there is nothing to service
+   (not registered, or the internal mdnsd backend). */
+#define DNSSD_SERVICE_RAOP     0
+#define DNSSD_SERVICE_AIRPLAY  1
+DNSSD_API int dnssd_get_service_fd(dnssd_t *dnssd, int service);
+DNSSD_API int dnssd_process_service(dnssd_t *dnssd, int service);
+
 DNSSD_API void dnssd_destroy(dnssd_t *dnssd);
+
+/* p2p support (macOS only) */
+#if defined(__APPLE__) && defined(UXPLAY_HAVE_APPLE_P2P)
+DNSSD_API void dnssd_set_peer_to_peer(dnssd_t *dnssd, int enabled);
+#endif
 
 #ifdef __cplusplus
 }

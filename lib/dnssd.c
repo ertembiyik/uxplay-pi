@@ -23,11 +23,21 @@
 #include <ctype.h>
 
 #include "dnssd.h"
-#include "netutils.h"
 
 #include "dnssdint.h"
 #include "utils.h"
 
+#if defined(__APPLE__) && defined(UXPLAY_HAVE_APPLE_P2P)
+/* p2p support (macOS only) */
+#include "netutils.h"
+void dnssd_set_peer_to_peer(dnssd_t *dnssd, int enabled) {
+    assert(dnssd);
+    dnssd->peer_to_peer = enabled ? 1 : 0;
+    /* Warning: Advertising without the macOS host set to accept traffic from P2P interfaces produces a
+     * receiver that clients can see but cannot connect to. */
+    netutils_set_peer_to_peer(dnssd->peer_to_peer);
+}
+#endif
 
 dnssd_t *
 dnssd_init(const char* name, int name_len, const char* hw_addr, int hw_addr_len, unsigned char pin_pw, int *error)
@@ -158,10 +168,10 @@ void dnssd_set_airplay_features(dnssd_t *dnssd, int bit, int val) {
     if (bit < 0 || bit > 63) return;
     if (val < 0 || val > 1) return;
     if (bit >= 32) {
-        mask = 0x1 << (bit - 32);
+        mask = 0x1U << (bit - 32);
         features = &(dnssd->features2);
     } else {
-        mask = 0x1 << bit;
+        mask = 0x1U << bit;
         features = &(dnssd->features1);
     }
     if (val) {
@@ -169,12 +179,4 @@ void dnssd_set_airplay_features(dnssd_t *dnssd, int bit, int val) {
     } else {
         *features = *features & ~mask;
     }
-}
-
-void dnssd_set_peer_to_peer(dnssd_t *dnssd, int enabled) {
-    assert(dnssd);
-    dnssd->peer_to_peer = enabled ? 1 : 0;
-    /* Advertising without accepting traffic from P2P interfaces produces a
-     * receiver that clients can see but cannot connect to. */
-    netutils_set_peer_to_peer(dnssd->peer_to_peer);
 }

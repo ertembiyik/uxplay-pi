@@ -29,8 +29,6 @@
 #endif
 #endif
 
-static int peer_to_peer = 0;
-
 int
 netutils_init()
 {
@@ -62,11 +60,15 @@ netutils_cleanup()
 #endif
 }
 
+/* for p2p support (macOS only ) */
+#if defined(__APPLE__) && defined(UXPLAY_HAVE_APPLE_P2P)
+static int peer_to_peer = 0;
 void
 netutils_set_peer_to_peer(int enabled)
 {
     peer_to_peer = enabled ? 1 : 0;
 }
+#endif
 
 unsigned char *
 netutils_get_address(void *sockaddr, int *length, unsigned int *zone_id, unsigned short *port)

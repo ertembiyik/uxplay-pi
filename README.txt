@@ -10,10 +10,10 @@
     The previous implementation based on Apple's dns_sd.h is still
     available by compiling UxPlay using `cmake -DUSE_DNS_SD=1`** (By
     default, UxPlay on macOS continues to use Bonjour: to test the
-    UxPlay internal mdns implementation on macOS, use
+    UxPlay internal mDNS implementation on macOS, use
     `cmake -DUSE_MDNS=1`).
 
-    *Comments about issues with this new internal mdns implementation,
+    *Comments about issues with this new internal mDNS implementation,
     and whether it should become the default (with the external
     Avahi/Bonjour implementation remaining as an alternative build
     option), or vice versa, are extremely welcome.* (Issue
@@ -27,6 +27,11 @@
     (2) `-lang`, `-slang` with no arguments clear the selections. (-lang
         entries are used if -slang is absent); detection of dubbed
         vs. undubbed audio renditions is removed.
+
+    Added AWDL (Apple Wireless Direct Link) point-to-point client
+    connection option for macOS only (requires Bonjour): this offers a
+    direct wireless connection to the client. This uses a feature only
+    present in macOS, so is unavailable on other operating systems.
 
 -   **NEW in v1.73, up to v1.73.6** (March 2026):
 
@@ -526,7 +531,7 @@ First-time RPM builders should first install the rpm-build and
 rpmdevtools packages, then create the rpmbuild tree with
 "`rpmdev-setuptree`". Then download and copy uxplay.spec into
 `~/rpmbuild/SPECS`. In that directory, run
-"`pmdev-spectool -g -R  uxplay.spec`" to download the corresponding
+"`rpmdev-spectool -g -R  uxplay.spec`" to download the corresponding
 source file `uxplay-*.tar.gz` into `~/rpmbuild/SOURCES`
 ("rpmdev-spectool" may also be just called "spectool"); then run
 "`rpmbuild -ba uxplay.spec`" (you will need to install any required
@@ -880,7 +885,7 @@ Sound and video will play on the remote host; "nohup" will keep uxplay
 running if the ssh session is closed. Terminal output is saved to FILE
 (which can be /dev/null to discard it)
 
-## Building UxPlay on macOS: **(Intel X86_64 and "Apple Silicon" M1/M2 Macs)**
+## Building UxPlay on macOS: **(Intel X86_64 and "Apple Silicon" Macs)**
 
 *Note: A native AirPlay Server feature is included in macOS since macOS
 12 Monterey, but is restricted to recent hardware. As well as running on
@@ -1017,6 +1022,20 @@ provides its own Bluetooth LE stack, as a USB serial modem. Bluetooth
 Service Discovery is an alternative to Rendezvous/Bonjour DNS_SD, and
 can be used on networks that don't allow DNS_SD. See [instructions
 below](#bluetooth-le-beacon-setup).
+
+**NEW**: (Only on macOS) AWDL (Apple Wireless Direct Link)
+point-to-point AirPlay connections from clients are now supported on
+macOS hosts by UxPlay when it is compiled to use Bonjour. Make sure the
+macOS host has enabled the AirPlay receiver (in System
+Settings-\>General-\>AirDrop & Continuity -\> AirPlay; you may need to
+switch AirPlay Receiver off and then on again to get it working). Use
+option `-p2p`, which acts as if the option `-pin` has been used,
+requiring a random one-time pin (displayed on the UxPlay terminal) to be
+entered, if the client has not previously authenticated with UxPlay by
+pin. After the first time a pin authentication has been done, a client
+will not need to authenticate again, unless the UxPlay deviceID is
+changed. (To set a fixed non-random pin as e.g. 3939, use the
+combination `-p2p -pin 3939`.)
 
 ## Building UxPlay on Microsoft Windows, using MSYS2 with the MinGW-64 compiler.
 
@@ -1228,6 +1247,23 @@ activated in the Windows Registry: using regedit, find the Registry
 section 'HKEY_Current_User/Control Panel/Input Method", and add a new
 Key "EnableHexNumpad" with value "1", then reboot the computer.*
 
+**New (in v1.74)**: A reworked NTP subsystem that can use kernel (as
+opposed to user-space) packet arrival timestamps, for higher NTP
+accuracy. Supported on most modern Windows systems. A console message
+when UxPlay connects with a client, and starts NTP, may tell you that
+Windows on your server suppports kernel timestamps, but they are not yet
+enabled. To enable: use Windows PowerShell as an Administrator, and
+issue the command
+
+    Set-NetAdapterAdvancedProperty -Name "<name>" -DisplayName "Software Timestamp" -DisplayValue "RxAll"
+
+Here "`<name>`" is the adapter name on Windows: *e.g.* "Ethernet",
+"Wi-Fi", "Ethernet 2", *etc*. If your Windows system does **not**
+support kernel timestamps, you will see a message confirming this when
+the "`uxplay -d`" debug option is used. With this option you will also
+see the arrival times of NTP packets, flagged as either `(kernel)` or
+`(clock)` showing whether or not kernel timestamps are being used.
+
 # Usage
 
 Options:
@@ -1318,6 +1354,22 @@ address, which can be changed with the -m option; see the -key option
 for an alternative method of key generation). *(Add a line "pin" in the
 UxPlay startup file if you wish the UxPlay server to use the pin
 authentication protocol).*
+
+**-p2p**: (macOS with the Apple Bonjour DNS-SD backend only) also
+advertise UxPlay on Apple peer-to-peer interfaces, including AWDL, and
+accept connections arriving on those interfaces. This can make UxPlay
+available when the client and server do not share a usable local
+network. The option must be used with **-pin \[nnnn\]**, which enables
+the legacy-pairing path used for this feature. Because **-p2p** makes
+the receiver discoverable to nearby Apple devices, using a fixed or
+random pin is also an important access control. This feature uses the
+private macOS socket option `SO_RECV_ANYIF`; it is unavailable when
+UxPlay is built with `-DUSE_MDNS=1`.
+
+-   \*\* To use this feature, make sure thet the macOS host on which
+    UxPlay is running has enabled the AirPlay receiver, and allowed its
+    use by the appropriate class of users. This is done on macOS 16 in
+    System Settings-\>General-\>Airdrop & Continuity-\>AirPlay
 
 **-reg \[*filename*\]**: (since v1.68). If "-pin" is used, this option
 maintains a register of pin-authenticated "trusted clients" in
@@ -2266,8 +2318,10 @@ what version UxPlay claims to be.
 
 # Changelog
 
-1.74 2026-06-21 Optional minimal internal mDNSResponder to replace
-Bonjour/Avahi. Reworked language selection for HLS video.
+1.74 2026-09-14 Optional minimal internal mDNSResponder to replace
+Bonjour/Avahi. Reworked language selection for HLS video. Added AWDL
+direct connection option (only for macOS hosts). Added use of kernel
+timestamps for NTP, and a rebuilt NTP subsystem.
 
 1.73.6 2026-03-22 Fix "not a socket" message uxplay bug. Futher
 uxplay-beacon.py improvements (Only use GLib in BlueZ module)

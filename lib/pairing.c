@@ -34,6 +34,7 @@ typedef struct srp_s {
     unsigned char verifier[SRP_VERIFIER_SIZE];
     unsigned char session_key[SRP_SESSION_KEY_SIZE];
     unsigned char private_key[SRP_PRIVATE_KEY_SIZE];
+    bool proof_validated;
 } srp_t;
 
 struct pairing_s {
@@ -198,16 +199,18 @@ pairing_session_get_public_key(pairing_session_t *session, unsigned char ecdh_ke
 int
 pairing_session_make_nonce(pairing_session_t *session, uint64_t *local_time, const char *client_data, unsigned char *nonce, int len)  {
     unsigned char hash[SHA512_DIGEST_LENGTH];
+    unsigned char ed_ours[ED25519_KEY_SIZE];
     if (len > (int) sizeof(hash)) {
       return -1;
     }
     if (!client_data || !local_time || !session || !nonce || len <= 0) {
       return -2;
     }
+    ed25519_key_get_raw(ed_ours, session->ed_ours);
     sha_ctx_t *ctx = sha_init();
     sha_update(ctx, (const unsigned char *) local_time, sizeof(uint64_t));
     sha_update(ctx, (const unsigned char *) client_data, strlen(client_data));
-    sha_update(ctx, (const unsigned char *) session->ed_ours, ED25519_KEY_SIZE);
+    sha_update(ctx, (const unsigned char *) ed_ours, ED25519_KEY_SIZE);
     sha_final(ctx, hash, NULL);
     sha_destroy(ctx);
     memcpy(nonce, hash, len);
@@ -241,8 +244,11 @@ char *get_token(char **cursor, char *token_name, char start_char, char end_char)
 
 //#define test_digest
 bool
-pairing_digest_verify(const char *method, const char * authorization, const char *password) {
-  /* RFC 2617 HTTP md5 Digest password authentication */
+pairing_digest_verify(const char *method, const char *authorization, const char *password,
+                      const char *expected_nonce) {
+    if (!method || !password || !expected_nonce) {
+        return false;
+    }
     size_t authlen = strlen(authorization);
     char *sentence = (char *) malloc(authlen + 1);
     if (!sentence) {
@@ -295,6 +301,11 @@ pairing_digest_verify(const char *method, const char * authorization, const char
         cnonce = get_token(&cursor, "cnonce", '\"', '\"');
     }
     response = get_token(&cursor, "response", '\"', '\"');
+    if (!username || !realm || !nonce || strcmp(nonce, expected_nonce) || !uri || !response ||
+        (qop && (!nc || !cnonce))) {
+        free(sentence);
+        return false;
+    }
 
 #ifdef test_digest
     printf("username: [%s]  realm: [%s]\n", username, realm);
@@ -499,7 +510,7 @@ random_pin() {
 
 int
 srp_new_user(pairing_session_t *session, pairing_t *pairing, const char *device_id, const char *pin,
-             const char **salt, int *len_salt, const char **pk, int *len_pk) {
+             const char **salt, int *len_salt,  char **pk, int *len_pk) {
     if (strlen(device_id) > SRP_USERNAME_SIZE) {
         return -1;
     }
@@ -530,12 +541,23 @@ srp_new_user(pairing_session_t *session, pairing_t *pairing, const char *device_
                                        (const unsigned char **) &srp_s, &len_s,
                                        (const unsigned char **) &srp_v, &len_v,
                                        NULL, NULL);
-    if (len_s != SRP_SALT_SIZE || len_v != SRP_VERIFIER_SIZE) {
+
+    /* srp_create_salted_verification_key does not return leading zeros of srp_s and srp_v */
+    int s_offset = SRP_SALT_SIZE - len_s;
+    int v_offset = SRP_VERIFIER_SIZE - len_v;
+    
+    if (s_offset < 0 || v_offset < 0) {
         return -3;
     }
 
-    memcpy(session->srp->salt, srp_s, SRP_SALT_SIZE);
-    memcpy(session->srp->verifier, srp_v, SRP_VERIFIER_SIZE);
+    memcpy(session->srp->salt + s_offset, srp_s, len_s);
+    memcpy(session->srp->verifier + v_offset, srp_v, len_v);
+    if (s_offset) {
+        memset(session->srp->salt, 0, s_offset);
+    }
+    if (v_offset) {
+        memset(session->srp->verifier, 0, v_offset);
+    }
 
     *salt = (char *) session->srp->salt;
     *len_salt = len_s;
@@ -549,14 +571,19 @@ srp_new_user(pairing_session_t *session, pairing_t *pairing, const char *device_
     *pk = (char *) srp_B;
     *len_pk = len_B;
 
+    free(srp_s);
+    free(srp_v);
+
     return 0;
 }
 
 int
 srp_validate_proof(pairing_session_t *session, pairing_t *pairing, const unsigned char *A,
-                    int len_A, unsigned char *proof, int client_proof_len, int proof_len) {
-    int authenticated  = 0;
-    const unsigned char *B =  NULL;
+                   int len_A, unsigned char *proof, int proof_len) {
+    if (!session->srp) {
+        return -1;
+    }
+    const unsigned char *B = NULL;
     const unsigned char *b = session->srp->private_key;
     int len_b = SRP_PRIVATE_KEY_SIZE;
     int len_B = 0;
@@ -571,20 +598,22 @@ srp_validate_proof(pairing_session_t *session, pairing_t *pairing, const unsigne
                                                     b, len_b,
                                                     &B, &len_B, NULL, NULL, 1);
 
-    srp_verifier_verify_session(verifier, proof, &M2);
-    authenticated = srp_verifier_is_authenticated(verifier);
-    if (authenticated == 0) {
-        /* HTTP 470 should be sent to client if not verified.*/
-        srp_verifier_delete(verifier);
-        free (session->srp);
+    if (verifier) {
+        srp_verifier_verify_session(verifier, proof, &M2);
+        if (srp_verifier_is_authenticated(verifier)) {
+            session_key = srp_verifier_get_session_key(verifier, &len_K);
+        }
+    }
+    if (!session_key || len_K != SRP_SESSION_KEY_SIZE) {
+        if (verifier) {
+            srp_verifier_delete(verifier);
+        }
+        free(session->srp);
         session->srp = NULL;
         return -1;
     }
-    session_key = srp_verifier_get_session_key(verifier, &len_K);
-    if (len_K != SRP_SESSION_KEY_SIZE) {
-        return -2;
-    }
     memcpy(session->srp->session_key, session_key, len_K);
+    session->srp->proof_validated = true;
     memcpy(proof, M2, proof_len);
     srp_verifier_delete(verifier);
     return 0;
@@ -592,6 +621,9 @@ srp_validate_proof(pairing_session_t *session, pairing_t *pairing, const unsigne
 int
 srp_confirm_pair_setup(pairing_session_t *session, pairing_t *pairing,
                        unsigned char *epk, unsigned char *auth_tag) {
+    if (!session->srp || !session->srp->proof_validated) {
+        return -1;
+    }
     unsigned char aesKey[16] = {0}, aesIV[16] = {0};
     unsigned char hash[SHA512_DIGEST_LENGTH] = {0};
     unsigned char pk[ED25519_KEY_SIZE] = {0};

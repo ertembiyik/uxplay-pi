@@ -79,8 +79,6 @@ void media_data_store_destroy(void *media_data_store);
 
 // called by the POST /action handler:
 char *process_media_data(void *media_data_store, const char *url, const char *data, int datalen);
-char *adjust_master_playlist (char *fcup_response_data, int fcup_response_datalen,
-                              const char *uri_prefix, char *uri_local_prefix);
 char *adjust_yt_condensed_playlist(const char *media_playlist);
 
 //called by the POST /play handler

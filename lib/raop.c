@@ -95,7 +95,7 @@ struct raop_s {
     char *random_pw;
     unsigned char auth_fail_count;
 
-  /* used for setting HLS video language choices */
+    /* used for setting HLS video language choices */
     const char *lang;
     const char *lang_system;
     const char *lang_subtitles;
@@ -859,7 +859,7 @@ void raop_remove_known_connections(raop_t * raop) {
 void raop_remove_hls_connections(raop_t * raop) {
     raop->video_play_conn = NULL;
     httpd_remove_connections_by_type(raop->httpd, CONNECTION_TYPE_HLS);
-    httpd_remove_connections_by_type(raop->httpd, CONNECTION_TYPE_PTTH);
+    httpd_remove_connections_by_type(raop->httpd, CONNECTION_TYPE_EVENT);
     httpd_remove_connections_by_type(raop->httpd, CONNECTION_TYPE_AIRPLAY);
 }
 
@@ -895,4 +895,18 @@ uint64_t get_local_time() {
 
 void ntp_global_init(void) {
     raop_ntp_global_init();
+}
+
+const char *get_codec_string(hls_video_codec_t codec) {
+    const char *codec_string[] = {
+      "AVC",
+      "HEVC",
+      "VP9",
+      "AV1",
+      "UNKNOWN"
+    };
+    if (codec < AVC || codec >= UNKNOWN) {
+        return NULL;
+    }
+    return codec_string[codec];
 }
