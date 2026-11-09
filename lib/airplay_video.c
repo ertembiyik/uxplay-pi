@@ -1417,8 +1417,9 @@ char * get_media_playlist(airplay_video_t *airplay_video, int *count, float *dur
         pthread_mutex_unlock(&airplay_video->media_data_store_lock);
         return NULL;
     }
+    size_t origin_len = strlen(airplay_video->uri_prefix);
     for (int i = 0; i < airplay_video->num_uri; i++) {
-        if (strstr(media_data_store[i].uri, uri)) {
+        if (strcmp(media_data_store[i].uri + origin_len, uri) == 0) {
             media_item_t *item = &media_data_store[media_data_store[i].num];
             char *copy = NULL;
             bool stale = true;
@@ -1486,54 +1487,60 @@ int analyze_media_playlist(char *playlist, float *duration, bool *endlist) {
     return count;
 }
 
-/* parse Master Playlist, make table of Media Playlist uri's that it lists */
+static const char *next_media_playlist_uri(const char *cursor, const char *origin,
+                                           size_t origin_len, const char **uri_end) {
+    const char delimiters[] = "\" \t\r\n";
+    const char extension[] = ".m3u8";
+    if (origin_len == 0) {
+        return NULL;
+    }
+
+    for (const char *uri = strstr(cursor, origin); uri; uri = strstr(uri + origin_len, origin)) {
+        const char *target = uri + origin_len;
+        if (*target != '/' || (uri != cursor && !strchr(delimiters, uri[-1]))) {
+            continue;
+        }
+        const char *path_end = target + strcspn(target, "?#\" \t\r\n");
+        size_t extension_len = sizeof(extension) - 1;
+        if ((size_t) (path_end - target) < extension_len ||
+            memcmp(path_end - extension_len, extension, extension_len) != 0) {
+            continue;
+        }
+        *uri_end = path_end + strcspn(path_end, delimiters);
+        return uri;
+    }
+    return NULL;
+}
+
 int create_media_uri_table(const char *url_prefix, const char *master_playlist_data,
                            int datalen, char ***media_uri_table, int *num_uri) {
-    const char *ptr = strstr(master_playlist_data, url_prefix);
-    char ** table = NULL;
-    if (ptr == NULL) {
+    size_t origin_len = strlen(url_prefix);
+    const char *end = master_playlist_data;
+    int count = 0;
+    while (next_media_playlist_uri(end, url_prefix, origin_len, &end)) {
+        count++;
+    }
+    if (count == 0) {
         return -1;
     }
-    int count = 0;
-    while (ptr != NULL) {
-        const char *end = strstr(ptr, "m3u8");
-        if (end == NULL) {
-            return 1;
-        }
-        end += sizeof("m3u8");
-        count++;
-        ptr = strstr(end, url_prefix);
-    }
-    table  = (char **)  calloc(count, sizeof(char *));
+    char **table = calloc(count, sizeof(*table));
     if (!table) {
-      return -1;
+        return -1;
     }
+
+    end = master_playlist_data;
     for (int i = 0; i < count; i++) {
-        table[i] = NULL;
-    }
-    ptr = strstr(master_playlist_data, url_prefix);
-    count = 0;
-    while (ptr != NULL) {
-        const char *end = strstr(ptr, "m3u8");
-        char *uri;
-        if (end == NULL) {
-            return 0;
-        }
-        end += sizeof("m3u8");
-        size_t len = end - ptr - 1;
-	    uri  = (char *) calloc(len + 1, sizeof(char));
-        if (!uri) {
-            printf("Memory allocation failure (uri)\n");
+        const char *uri = next_media_playlist_uri(end, url_prefix, origin_len, &end);
+        const char *fragment = memchr(uri, '#', (size_t) (end - uri));
+        size_t len = (fragment ? fragment : end) - uri;
+        table[i] = calloc(len + 1, 1);
+        if (!table[i]) {
+            printf("Memory allocation failure (playlist URI)\n");
             exit(1);
         }
-	    memcpy(uri , ptr, len);
-        table[count] = uri;
-        uri =  NULL;	
-	    count ++;
-	    ptr = strstr(end, url_prefix);
+        memcpy(table[i], uri, len);
     }
     *num_uri = count;
-
     *media_uri_table = table;
     return 0;
 }
@@ -1541,46 +1548,26 @@ int create_media_uri_table(const char *url_prefix, const char *master_playlist_d
 /* Adjust uri prefixes in the Master Playlist, for sending to the Media Player */
 char *adjust_master_playlist (char *fcup_response_data, int fcup_response_datalen,
                               const char *uri_prefix, char *uri_local_prefix) {
-    size_t uri_prefix_len = strlen(uri_prefix);
-    size_t uri_local_prefix_len = strlen(uri_local_prefix);
-    int counter = 0;
-    char *ptr = strstr(fcup_response_data, uri_prefix);
-    while (ptr != NULL) {
-        counter++;
-        ptr++;
-        ptr = strstr(ptr, uri_prefix);
+    size_t origin_len = strlen(uri_prefix);
+    size_t local_len = strlen(uri_local_prefix);
+    const char *cursor = fcup_response_data;
+    const char *end = cursor;
+    const char *uri;
+    playlist_buffer_t rewritten = {0};
+    while ((uri = next_media_playlist_uri(end, uri_prefix, origin_len, &end))) {
+        if (!_playlist_buffer_append(&rewritten, cursor, (size_t) (uri - cursor)) ||
+            !_playlist_buffer_append(&rewritten, uri_local_prefix, local_len)) {
+            printf("Memory allocation failure (new_master)\n");
+            exit(1);
+        }
+        cursor = uri + origin_len;
     }
-
-    size_t len = uri_local_prefix_len - uri_prefix_len;
-    len *= counter;
-    len += fcup_response_datalen;
-     int new_len = (int) len;
-    char *new_master = (char *) malloc(new_len + 1);
-    if (!new_master) {
+    if (!_playlist_buffer_append(&rewritten, cursor,
+                                 (size_t) (fcup_response_data + fcup_response_datalen - cursor))) {
         printf("Memory allocation failure (new_master)\n");
         exit(1);
     }
-    new_master[new_len] = '\0';
-    char *first = fcup_response_data;
-    char *new = new_master;
-    char *last = strstr(first, uri_prefix);
-    counter  = 0;
-    while (last != NULL) {
-        counter++;
-        len = last - first;
-        memcpy(new, first, len);
-        first = last + uri_prefix_len;
-        new += len;
-        memcpy(new, uri_local_prefix, uri_local_prefix_len);
-        new += uri_local_prefix_len;
-        last = strstr(last + uri_prefix_len, uri_prefix);
-        if (last  == NULL) {
-            len = fcup_response_data  + fcup_response_datalen  - first;
-            memcpy(new, first, len);
-            break;
-        }
-    }
-    return new_master;
+    return rewritten.data;
 }
 
 static char *_quoted_field(const char *hay, const char *key, size_t *len) {

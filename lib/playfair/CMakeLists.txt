@@ -4,3 +4,6 @@ include_directories(.)
 add_library( playfair
         STATIC
         ${DIR_SRCS})
+if (UNIX)
+    target_link_libraries(playfair PUBLIC m)
+endif()
