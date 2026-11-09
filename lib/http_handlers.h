@@ -590,15 +590,21 @@ http_handler_action(raop_conn_t *conn, http_request_t *request, http_response_t 
             printf("Memory allocation failed (playlist)\n");
             exit(1);
         }
-        memcpy(playlist, fcup_response_data, fcup_response_datalen);
-        if (playlist[fcup_response_datalen - 1] != '\n') {
-            playlist[fcup_response_datalen++] = '\n';
+        int normalized_len = 0;
+        for (int i = 0; i < fcup_response_datalen; i++) {
+            if (fcup_response_data[i] == '\r' && i + 1 < fcup_response_datalen && fcup_response_data[i + 1] == '\n') {
+                continue;
+            }
+            playlist[normalized_len++] = fcup_response_data[i];
         }
-        playlist[fcup_response_datalen] = '\0';
+        if (playlist[normalized_len - 1] != '\n') {
+            playlist[normalized_len++] = '\n';
+        }
+        playlist[normalized_len] = '\0';
 #ifndef PLIST_210
         plist_mem_free(fcup_response_data);
 #endif
-        if (strncmp(playlist,"#EXTM3U\n", strlen("#EXTM3U\n"))) {
+        if (strncmp(playlist, "#EXTM3U\n", strlen("#EXTM3U\n"))) {
             logger_log(raop->logger, LOGGER_ERR,"playlist is not a valid M3U8 playlist");
             free(playlist);
             goto  post_action_error;

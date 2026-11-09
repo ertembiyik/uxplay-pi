@@ -53,6 +53,26 @@ jobs:
           ls -la build/uxplay
           ctest --test-dir build --output-on-failure
 
+      - name: Verify sanitizer toggle
+        run: |
+          cmake -B build-asan -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCMAKE_C_FLAGS=-DCI_CALLER_FLAG \
+            -DNO_X11_DEPS=OFF -DENABLE_ASAN=ON
+          cmake --build build-asan --parallel
+          linked=$(readelf -d build-asan/uxplay)
+          grep -Fq '[libasan.so' <<<"$linked"
+          grep -Fq '[libubsan.so' <<<"$linked"
+          ASAN_OPTIONS=abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-asan --output-on-failure
+          cmake -B build-asan -DENABLE_ASAN=OFF
+          grep -qE '^CMAKE_BUILD_TYPE:[A-Z]+=${{ env.BUILD_TYPE }}$' build-asan/CMakeCache.txt
+          grep -qE '^CMAKE_C_FLAGS:[A-Z]+=-DCI_CALLER_FLAG$' build-asan/CMakeCache.txt
+          cmake --build build-asan --parallel
+          linked=$(readelf -d build-asan/uxplay)
+          if grep -E '\[lib(asan|ubsan)\.so' <<<"$linked"; then
+            echo "Sanitizer runtime remained linked after ENABLE_ASAN=OFF"
+            exit 1
+          fi
+          ctest --test-dir build-asan --output-on-failure
+
   build-macos:
     runs-on: macos-latest
     steps:
@@ -91,6 +111,28 @@ jobs:
         run: |
           test -x build/uxplay
           ls -la build/uxplay
+
+      - name: Verify incompatible peer-to-peer and password options
+        timeout-minutes: 1
+        run: |
+          expect_conflict() {
+            local output
+            if output=$(build/uxplay "$@" 2>&1); then
+              echo "UxPlay accepted incompatible options"
+              return 1
+            fi
+            if ! grep -Fq -- 'option -p2p cannot be combined with -pw' <<<"$output"; then
+              printf '%s\n' "$output"
+              return 1
+            fi
+          }
+          printf '%s\n' '# No options' > "$RUNNER_TEMP/uxplay-empty.conf"
+          printf '%s\n' 'pw fixture-pass' > "$RUNNER_TEMP/uxplay-password.conf"
+          printf '%s\n' 'p2p' > "$RUNNER_TEMP/uxplay-p2p.conf"
+          expect_conflict -rc "$RUNNER_TEMP/uxplay-empty.conf" -pw fixture-pass -p2p
+          expect_conflict -rc "$RUNNER_TEMP/uxplay-empty.conf" -p2p -pw
+          expect_conflict -rc "$RUNNER_TEMP/uxplay-password.conf" -p2p
+          expect_conflict -rc "$RUNNER_TEMP/uxplay-p2p.conf" -pw fixture-pass
 
   build-windows-intel:
     runs-on: windows-latest

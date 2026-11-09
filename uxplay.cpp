@@ -2076,23 +2076,7 @@ static void parse_arguments (int argc, char *argv[]) {
             }
         } else if (arg == "-p2p") {
 #if defined(__APPLE__) && defined(UXPLAY_HAVE_APPLE_P2P)
-            LOGI("macOS  point-to-point Airplay settings are in System Settings->General->AirDrop & Continuity->AirPlay->AirPlayReceiver"); 
-	    std::string command  = "defaults -currentHost read com.apple.controlcenter AirplayReceiverEnabled 2>/dev/null";
-            std::string output = execCommand(command.c_str());
-            output.erase(output.find_last_not_of(" \n\r\t") + 1);
-            if (output == "1" || output == "true") {
-	        LOGI(" macOS host reported AirplayReceiverEnabled is true");
-                peer_to_peer = true;
-                setup_legacy_pairing = true;
-                pin_pw = 1;
-	    } else {
-		if (output == "0" || output == "false") {
-                    LOGE(" macOS host reported AirplayReceiverEnabled was not true");
-		} else {
-                    LOGE(" macOS host did not report a value for AirplayReceiverEnabled; try switching AirPlay Receiver off then on");
-		}
-		exit(1);
-	    }
+            peer_to_peer = true;
 #else
 	    fprintf(stderr, "invalid: the \"-p2p\" option is only available on macOS hosts with UxPlay compiled to use Bonjour services\n");      
             exit(1);
@@ -3491,6 +3475,28 @@ int main (int argc, char *argv[]) {
     if (peer_to_peer) {
         fprintf(stderr, "option -p2p requires macOS and the Apple Bonjour DNS-SD backend\n");
         exit(1);
+    }
+#else
+    if (peer_to_peer) {
+        if (pin_pw >= 2) {
+            fprintf(stderr, "invalid: option -p2p cannot be combined with -pw (-p2p uses -pin [nnnn] legacy pairing)\n");
+            exit(1);
+        }
+        LOGI("macOS  point-to-point Airplay settings are in System Settings->General->AirDrop & Continuity->AirPlay->AirPlayReceiver");
+        std::string output = execCommand("defaults -currentHost read com.apple.controlcenter AirplayReceiverEnabled 2>/dev/null");
+        output.erase(output.find_last_not_of(" \n\r\t") + 1);
+        if (output == "1" || output == "true") {
+            LOGI(" macOS host reported AirplayReceiverEnabled is true");
+        } else {
+            if (output == "0" || output == "false") {
+                LOGE(" macOS host reported AirplayReceiverEnabled was not true");
+            } else {
+                LOGE(" macOS host did not report a value for AirplayReceiverEnabled; try switching AirPlay Receiver off then on");
+            }
+            exit(1);
+        }
+        setup_legacy_pairing = true;
+        pin_pw = 1;
     }
 #endif
     
