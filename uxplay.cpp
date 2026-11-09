@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <string>
+#include <atomic>
 #include <algorithm>
 #include <vector>
 #include <fstream>
@@ -33,6 +34,7 @@
 #include <sys/stat.h>
 #include <cstdio>
 #include <stdarg.h>
+#include <cmath>
 #include <math.h>
 #include <inttypes.h>
 
@@ -187,7 +189,9 @@ static guint video_eos_watch_id = 0;
 static guint progress_id = 0;
 static guint gst_hls_position_id = 0;
 static bool preserve_connections = false;
-static bool hls_session_may_be_stale = false;
+static std::atomic_bool hls_session_may_be_stale(false);
+static std::atomic_bool hls_renderer_stop_requested(false);
+static std::atomic_uint pending_audio_format(0);
 static guint missed_feedback_limit = MISSED_FEEDBACK_LIMIT;
 static guint missed_feedback = 0;
 static guint playbin_version = DEFAULT_PLAYBIN_VERSION;
@@ -559,6 +563,16 @@ static gboolean feedback_callback(gpointer loop) {
 }
 
 static gboolean reset_callback(gpointer loop) {
+    unsigned int audio_format = pending_audio_format.exchange(0);
+    bool stop_hls_renderer = hls_renderer_stop_requested.exchange(false) || audio_format;
+    if (stop_hls_renderer && use_video) {
+        LOGI("stopping HLS renderer on main loop");
+        video_renderer_stop();
+    }
+    if (audio_format && use_audio) {
+        unsigned char ct = (unsigned char) audio_format;
+        audio_renderer_start(&ct);
+    }
     if (reset_loop) {
         g_main_loop_quit((GMainLoop *) loop);
     }
@@ -2127,14 +2141,14 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
     switch (type) {
     case RESET_TYPE_NOHOLD:
         LOGD("video_reset: type = NoHold");
-        hls_session_may_be_stale = false;
+        hls_session_may_be_stale.store(false);
         if (hls_support) {
 	    url.erase();
             raop_destroy_airplay_video(raop, -1);
         }
     case RESET_TYPE_HLS_EOS:
         LOGD("video_reset: type= HLS_eos");
-        hls_session_may_be_stale = false;
+        hls_session_may_be_stale.store(false);
         if (use_video) {
             video_renderer_stop();
            /* reset the video renderer immediately to avoid a timing issue if we wait for main_loop to reset */ 
@@ -2163,7 +2177,7 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
         break;
     case RESET_TYPE_HLS_SHUTDOWN:
         LOGD("video_reset: type = HLS_Shutdown");
-        hls_session_may_be_stale = false;
+        hls_session_may_be_stale.store(false);
         if (use_video) {
             video_renderer_stop();
         }
@@ -2178,7 +2192,7 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
         break;
     case RESET_TYPE_ON_VIDEO_PLAY:
         LOGD("video_reset: type = on_video_play");
-        hls_session_may_be_stale = false;
+        hls_session_may_be_stale.store(false);
         break;
     case RESET_TYPE_HLS_CONN_CLOSED:
         /* The Android host uses additional player-ready/rate state to decide
@@ -2186,7 +2200,7 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
          * does not have that state, so keep playing until a replacement audio
          * or video session provides an unambiguous teardown boundary. */
         LOGD("video_reset: HLS /play connection closed");
-        hls_session_may_be_stale = true;
+        hls_session_may_be_stale.store(true);
         return;
     default:
         g_assert(FALSE);
@@ -2482,12 +2496,14 @@ extern "C" void audio_get_format (void *cls, unsigned char *ct, unsigned short *
        * exclusive ALSA HDMI device while its last frame remains visible.
        * Release that stale renderer before the replacement ALAC pipeline
        * opens the same device. */
-      if (hls_session_may_be_stale && use_video) {
-          LOGI("stopping stale HLS renderer before new audio connection");
-          video_renderer_stop();
-          hls_session_may_be_stale = false;
+      if (use_video && (hls_session_may_be_stale.exchange(false) ||
+                        hls_renderer_stop_requested.load())) {
+          LOGI("deferring new audio renderer until stale HLS renderer has stopped");
+          pending_audio_format.store(*ct);
+          hls_renderer_stop_requested.store(true);
+      } else {
+          audio_renderer_start(ct);
       }
-      audio_renderer_start(ct);
     }
 
     if (mux_to_file) {
@@ -2619,18 +2635,27 @@ extern "C" bool check_register(void *cls, const char *client_pk) {
 
 extern "C" void on_video_play(void *cls, const char* location, const float start_position) {
     /* start_position needs to be implemented */
-    video_renderer_set_start(start_position);
+    float validated_start_position = start_position;
+    if (!std::isfinite(validated_start_position) || validated_start_position < 0.0f) {
+        LOGW("on_video_play: ignoring invalid start position %f", validated_start_position);
+        validated_start_position = 0.0f;
+    }
+    video_renderer_set_start(validated_start_position);
     url.erase();
     url.append(location);
     relaunch_video = true;
     preserve_connections = true;
-    hls_session_may_be_stale = false;
-    LOGI("********************on_video_play: location = %s*** start position %f ********************", url.c_str(), start_position);
+    hls_session_may_be_stale.store(false);
+    LOGI("********************on_video_play: location = %s*** start position %f ********************", url.c_str(), validated_start_position);
     video_reset(cls, RESET_TYPE_ON_VIDEO_PLAY);
 }
 
 extern "C" void on_video_scrub(void *cls, const float position) {
     LOGI("on_video_scrub: position = %7.5f\n", position);
+    if (!std::isfinite(position) || position < 0.0f) {
+        LOGW("on_video_scrub: ignoring invalid position %f", position);
+        return;
+    }
     video_renderer_seek(position);
 }
 
@@ -2659,8 +2684,8 @@ extern "C" float on_video_playlist_remove (void *cls) {
 
  extern "C" void on_video_stop(void *cls) {
     LOGI("**************************on_video_stop\n");
-    hls_session_may_be_stale = false;
-    video_renderer_stop();
+    hls_session_may_be_stale.store(false);
+    hls_renderer_stop_requested.store(true);
  }
 
 extern "C" void on_video_acquire_playback_info (void *cls, playback_info_t *playback_info) {

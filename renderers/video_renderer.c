@@ -22,6 +22,7 @@
 
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
+#include <math.h>
 #include "video_renderer.h"
 
 #define SECOND_IN_NSECS 1000000000UL
@@ -1140,12 +1141,21 @@ bool video_get_playback_info(double *duration, double *position, double *seek_st
 }
 
 void video_renderer_set_start(float position) {
+    if (!isfinite(position) || position < 0.0f) {
+        logger_log(logger, LOGGER_WARNING, "ignoring invalid HLS start position %f", position);
+        hls_requested_start_position = 0;
+        return;
+    }
     hls_requested_start_position = (gint64) ((gdouble) position * GST_SECOND);
     logger_log(logger, LOGGER_DEBUG, "register HLS video start position %f %lld", position,
                hls_requested_start_position);    
 }
 
 void video_renderer_seek(float position) {
+    if (!isfinite(position) || position < 0.0f || !renderer) {
+        logger_log(logger, LOGGER_WARNING, "ignoring invalid HLS seek position %f", position);
+        return;
+    }
     gint64 seek_position = (gint64) ((gdouble) position * GST_SECOND);
     /* don't seek to within 1  microsecond  of beginning or end of video */
     if (hls_duration < 2000) return;
