@@ -187,6 +187,7 @@ static guint video_eos_watch_id = 0;
 static guint progress_id = 0;
 static guint gst_hls_position_id = 0;
 static bool preserve_connections = false;
+static bool hls_session_may_be_stale = false;
 static guint missed_feedback_limit = MISSED_FEEDBACK_LIMIT;
 static guint missed_feedback = 0;
 static guint playbin_version = DEFAULT_PLAYBIN_VERSION;
@@ -2126,12 +2127,14 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
     switch (type) {
     case RESET_TYPE_NOHOLD:
         LOGD("video_reset: type = NoHold");
+        hls_session_may_be_stale = false;
         if (hls_support) {
 	    url.erase();
             raop_destroy_airplay_video(raop, -1);
         }
     case RESET_TYPE_HLS_EOS:
         LOGD("video_reset: type= HLS_eos");
+        hls_session_may_be_stale = false;
         if (use_video) {
             video_renderer_stop();
            /* reset the video renderer immediately to avoid a timing issue if we wait for main_loop to reset */ 
@@ -2160,6 +2163,7 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
         break;
     case RESET_TYPE_HLS_SHUTDOWN:
         LOGD("video_reset: type = HLS_Shutdown");
+        hls_session_may_be_stale = false;
         if (use_video) {
             video_renderer_stop();
         }
@@ -2173,14 +2177,16 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
         relaunch_video = true;
         break;
     case RESET_TYPE_ON_VIDEO_PLAY:
-        LOGD("video_reset: type = on_video_play");      
+        LOGD("video_reset: type = on_video_play");
+        hls_session_may_be_stale = false;
         break;
     case RESET_TYPE_HLS_CONN_CLOSED:
         /* The Android host uses additional player-ready/rate state to decide
          * whether a closed /play connection was abandoned. The desktop host
-         * does not have that state, so preserve the pre-patch behavior rather
-         * than tearing down an HLS stream that may still be playing. */
+         * does not have that state, so keep playing until a replacement audio
+         * or video session provides an unambiguous teardown boundary. */
         LOGD("video_reset: HLS /play connection closed");
+        hls_session_may_be_stale = true;
         return;
     default:
         g_assert(FALSE);
@@ -2472,6 +2478,15 @@ extern "C" void audio_get_format (void *cls, unsigned char *ct, unsigned short *
     audio_type = type;
     
     if (use_audio) {
+      /* A closed HLS control connection can leave playbin holding the
+       * exclusive ALSA HDMI device while its last frame remains visible.
+       * Release that stale renderer before the replacement ALAC pipeline
+       * opens the same device. */
+      if (hls_session_may_be_stale && use_video) {
+          LOGI("stopping stale HLS renderer before new audio connection");
+          video_renderer_stop();
+          hls_session_may_be_stale = false;
+      }
       audio_renderer_start(ct);
     }
 
@@ -2609,6 +2624,7 @@ extern "C" void on_video_play(void *cls, const char* location, const float start
     url.append(location);
     relaunch_video = true;
     preserve_connections = true;
+    hls_session_may_be_stale = false;
     LOGI("********************on_video_play: location = %s*** start position %f ********************", url.c_str(), start_position);
     video_reset(cls, RESET_TYPE_ON_VIDEO_PLAY);
 }
@@ -2643,7 +2659,8 @@ extern "C" float on_video_playlist_remove (void *cls) {
 
  extern "C" void on_video_stop(void *cls) {
     LOGI("**************************on_video_stop\n");
-    video_renderer_hls_ready();
+    hls_session_may_be_stale = false;
+    video_renderer_stop();
  }
 
 extern "C" void on_video_acquire_playback_info (void *cls, playback_info_t *playback_info) {

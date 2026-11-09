@@ -238,12 +238,21 @@ void audio_renderer_init(logger_t *render_logger, const char* audiosink, const b
     }
 }
 
-void audio_renderer_stop() {
-    if (renderer) {
-        gst_app_src_end_of_stream(GST_APP_SRC(renderer->appsrc));
-        gst_element_set_state (renderer->pipeline, GST_STATE_NULL);
-        renderer = NULL;
+static void audio_renderer_stop_instance(audio_renderer_t *target) {
+    if (!target || !target->pipeline) return;
+
+    if (target->appsrc) {
+        gst_app_src_end_of_stream(GST_APP_SRC(target->appsrc));
     }
+    gst_element_set_state(target->pipeline, GST_STATE_NULL);
+    gst_element_get_state(target->pipeline, NULL, NULL, GST_SECOND);
+}
+
+void audio_renderer_stop() {
+    if (!renderer) return;
+
+    audio_renderer_stop_instance(renderer);
+    renderer = NULL;
 }
 
 static void get_renderer_type(unsigned char *ct, int *id) {
@@ -287,8 +296,7 @@ void  audio_renderer_start(unsigned char *ct) {
     get_renderer_type(ct, &id);
     if (id >= 0 && renderer) {
         if(*ct != renderer->ct) {
-            gst_app_src_end_of_stream(GST_APP_SRC(renderer->appsrc));
-            gst_element_set_state (renderer->pipeline, GST_STATE_NULL);
+            audio_renderer_stop_instance(renderer);
             logger_log(logger, LOGGER_INFO, "changed audio connection, format %s", format[id]);
             renderer = renderer_type[id];
             gst_element_set_state (renderer->pipeline, GST_STATE_PLAYING);
@@ -423,12 +431,12 @@ static gboolean gstreamer_audio_pipeline_bus_callback(GstBus *bus, GstMessage *m
         logger_log(logger, LOGGER_INFO, "GStreamer error (audio): %s %s", GST_MESSAGE_SRC_NAME(message),err->message);
         g_error_free(err);
         g_free(debug);
-        if (message_renderer->appsrc) {
-            gst_app_src_end_of_stream (GST_APP_SRC(message_renderer->appsrc));
-        }
-        gst_bus_set_flushing(bus, TRUE);
-        gst_element_set_state (message_renderer->pipeline, GST_STATE_READY);
+        /* READY can keep an exclusive ALSA device open.  Fully stop the
+         * failed pipeline so a replacement AirPlay session can retry without
+         * requiring a process restart. */
+        audio_renderer_stop_instance(message_renderer);
         if (message_renderer == renderer) {
+            renderer = NULL;
             g_main_loop_quit( (GMainLoop *) loop);
         }
 	break;
