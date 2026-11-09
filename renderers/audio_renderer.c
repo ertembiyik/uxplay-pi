@@ -399,6 +399,22 @@ void audio_renderer_destroy() {
 }
 
 static gboolean gstreamer_audio_pipeline_bus_callback(GstBus *bus, GstMessage *message, void *loop) {
+    audio_renderer_t *message_renderer = NULL;
+    for (int i = 0; i < NFORMATS; i++) {
+        if (renderer_type[i] && renderer_type[i]->bus == bus) {
+            message_renderer = renderer_type[i];
+            break;
+        }
+    }
+
+    /* Messages may still be queued after an audio connection has stopped or
+     * changed format.  Use the renderer that owns this bus instead of the
+     * mutable global current renderer, and ignore messages from a renderer
+     * which has already been destroyed. */
+    if (!message_renderer) {
+        return TRUE;
+    }
+
     switch (GST_MESSAGE_TYPE(message)) {
     case GST_MESSAGE_ERROR: {
         GError *err = NULL;
@@ -407,12 +423,14 @@ static gboolean gstreamer_audio_pipeline_bus_callback(GstBus *bus, GstMessage *m
         logger_log(logger, LOGGER_INFO, "GStreamer error (audio): %s %s", GST_MESSAGE_SRC_NAME(message),err->message);
         g_error_free(err);
         g_free(debug);
-        if (renderer->appsrc) {
-            gst_app_src_end_of_stream (GST_APP_SRC(renderer->appsrc));
+        if (message_renderer->appsrc) {
+            gst_app_src_end_of_stream (GST_APP_SRC(message_renderer->appsrc));
         }
         gst_bus_set_flushing(bus, TRUE);
-        gst_element_set_state (renderer->pipeline, GST_STATE_READY);
-        g_main_loop_quit( (GMainLoop *) loop);
+        gst_element_set_state (message_renderer->pipeline, GST_STATE_READY);
+        if (message_renderer == renderer) {
+            g_main_loop_quit( (GMainLoop *) loop);
+        }
 	break;
     }
     case GST_MESSAGE_EOS:

@@ -1,5 +1,7 @@
 # UxPlay 1.74 (Experimental): AirPlay-Mirror and AirPlay-Audio server for Linux, macOS, and Unix (also runs on Windows).
 
+This Raspberry Pi downstream carries modifications to UxPlay dating from August 2026. Its Git history includes the original upstream commits and a reconstruction from saved source snapshots. The HLS compatibility work includes adaptations from [Android AirPlay Server](https://github.com/jqssun/android-airplay-server). The project retains the [GPLv3 license](LICENSE).
+
 ### **Now developed at the GitHub site <https://github.com/FDH2/UxPlay> (where ALL user issues should be posted, and latest versions can be found).**
 
 -   **NEW in v 1.74 (Experimental) (June 2026)

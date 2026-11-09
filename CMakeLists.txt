@@ -2,6 +2,8 @@ cmake_minimum_required( VERSION 3.13 )
 
 project( uxplay )
 
+include(CTest)
+
 message( STATUS "Project name: " ${PROJECT_NAME} )
 
 include(GNUInstallDirs)
@@ -82,6 +84,13 @@ add_executable( uxplay uxplay.cpp )
 target_link_libraries( uxplay renderers airplay )
 if (DBUS_FOUND)
       target_link_libraries( uxplay ${DBUS_LIBRARY})
+endif()
+
+if (BUILD_TESTING)
+  add_executable(test_playlist_uris tests/test_playlist_uris.c)
+  target_include_directories(test_playlist_uris PRIVATE lib)
+  target_link_libraries(test_playlist_uris airplay)
+  add_test(NAME playlist_uris COMMAND test_playlist_uris)
 endif()
 
 install( TARGETS  uxplay RUNTIME DESTINATION bin )

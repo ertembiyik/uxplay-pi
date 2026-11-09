@@ -88,6 +88,7 @@ struct raop_s {
     /* activate support for HLS live streaming */
     bool hls_support;
     bool hls_pending;
+    void *video_play_conn;
   
     /* used in digest authentication */
     char *nonce;
@@ -551,6 +552,13 @@ conn_destroy(void *ptr) {
     raop_t *raop = conn->raop;
     logger_log(raop->logger, LOGGER_DEBUG, "Destroying connection");
 
+    if (raop->video_play_conn == ptr) {
+        raop->video_play_conn = NULL;
+        if (raop->callbacks.video_reset) {
+            raop->callbacks.video_reset(raop->callbacks.cls, RESET_TYPE_HLS_CONN_CLOSED);
+        }
+    }
+
     if (raop->callbacks.conn_destroy) {
         raop->callbacks.conn_destroy(raop->callbacks.cls);
     }
@@ -640,6 +648,7 @@ raop_init(raop_callbacks_t *callbacks) {
 
     raop->hls_support = false;
     raop->hls_pending = false;
+    raop->video_play_conn = NULL;
     
     raop->nonce = NULL;
 
@@ -848,6 +857,7 @@ void raop_remove_known_connections(raop_t * raop) {
 }
 
 void raop_remove_hls_connections(raop_t * raop) {
+    raop->video_play_conn = NULL;
     httpd_remove_connections_by_type(raop->httpd, CONNECTION_TYPE_HLS);
     httpd_remove_connections_by_type(raop->httpd, CONNECTION_TYPE_PTTH);
     httpd_remove_connections_by_type(raop->httpd, CONNECTION_TYPE_AIRPLAY);
@@ -874,6 +884,7 @@ void raop_handle_eos(raop_t *raop) {
     assert (id >= 0);
     raop_destroy_airplay_video(raop, id);
     raop->current_video = -1;
+    raop->video_play_conn = NULL;
     /* reset video without deleting raop->airplay_video */
     raop->callbacks.video_reset(raop->callbacks.cls, RESET_TYPE_HLS_EOS);
 }

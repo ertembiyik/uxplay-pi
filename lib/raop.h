@@ -65,7 +65,8 @@ typedef enum reset_type_e {
     RESET_TYPE_HLS_SHUTDOWN,
     RESET_TYPE_HLS_EOS,
     RESET_TYPE_ON_VIDEO_PLAY,
-    RESET_TYPE_RTP_TO_HLS_TEARDOWN
+    RESET_TYPE_RTP_TO_HLS_TEARDOWN,
+    RESET_TYPE_HLS_CONN_CLOSED
 } reset_type_t;
 
 struct raop_callbacks_s {

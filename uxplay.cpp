@@ -2175,6 +2175,13 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
     case RESET_TYPE_ON_VIDEO_PLAY:
         LOGD("video_reset: type = on_video_play");      
         break;
+    case RESET_TYPE_HLS_CONN_CLOSED:
+        /* The Android host uses additional player-ready/rate state to decide
+         * whether a closed /play connection was abandoned. The desktop host
+         * does not have that state, so preserve the pre-patch behavior rather
+         * than tearing down an HLS stream that may still be playing. */
+        LOGD("video_reset: HLS /play connection closed");
+        return;
     default:
         g_assert(FALSE);
         break;

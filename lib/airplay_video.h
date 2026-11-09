@@ -20,11 +20,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+
+typedef struct airplay_video_s airplay_video_t;
+
 #include "raop.h"
 #include "logger.h"
 
-
-typedef struct airplay_video_s airplay_video_t;
 typedef struct media_item_s media_item_t;
 
 void set_apple_session_id(airplay_video_t *airplay_video, const char *apple_session_id, size_t len);
@@ -47,15 +48,22 @@ void set_next_media_uri_id(airplay_video_t *airplay_video, int id);
 int get_next_media_uri_id(airplay_video_t *airplay_video);
 int get_num_media_uri(airplay_video_t *airplay_video);
 char *get_media_uri_by_num(airplay_video_t *airplay_video, int num);
+int get_media_uri_index_by_remote_url(airplay_video_t *airplay_video, const char *remote_url);
+void set_initial_fetch_complete(airplay_video_t *airplay_video);
+bool get_initial_fetch_complete(airplay_video_t *airplay_video);
 
 int analyze_media_playlist(char *playlist, float *duration, bool *endlist);
 int create_media_uri_table(const char *url_prefix, const char *master_playlist_data,
                            int datalen, char ***media_uri_table, int *num_uri);
 void store_master_playlist(airplay_video_t *airplay_video, char *master_playlist);
 char *select_master_playlist_language(airplay_video_t *airplay_video, char *master_playlist);
+char *limit_master_playlist_resolution(char *master_playlist, unsigned int max_width,
+                                       unsigned int max_height, int *removed_variants);
+char *resolve_master_playlist_variant_uris(char *master_playlist, const char *playlist_url);
+char *resolve_playlist_resource_uris(char *playlist, const char *playlist_url);
 int store_media_playlist(airplay_video_t *airplay_video, char *media_playlist, int *count, float *duration, bool*endlist, int num);
 char *get_master_playlist(airplay_video_t *airplay_video);
-char *get_media_playlist(airplay_video_t *airplay_video, int *count, float *duration, const char *uri);
+char *get_media_playlist(airplay_video_t *airplay_video, int *count, float *duration, const char *uri, bool *should_fetch, char **remote_uri);
 
 void destroy_media_data_store(airplay_video_t *airplay_video);
 void create_media_data_store(airplay_video_t * airplay_video, char ** media_data_store, int num_uri);
