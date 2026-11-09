@@ -100,6 +100,11 @@ if (BUILD_TESTING)
   target_include_directories(test_playlist_uris PRIVATE lib)
   target_link_libraries(test_playlist_uris airplay)
   add_test(NAME playlist_uris COMMAND test_playlist_uris)
+
+  add_executable(test_event_requests tests/test_event_requests.c)
+  target_include_directories(test_event_requests PRIVATE lib)
+  target_link_libraries(test_event_requests airplay)
+  add_test(NAME event_requests COMMAND test_event_requests)
 endif()
 
 if (ENABLE_ASAN)

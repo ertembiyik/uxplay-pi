@@ -379,16 +379,16 @@ http_handler_reverse(raop_conn_t *conn, http_request_t *request, http_response_t
     logger_log(raop->logger, LOGGER_INFO, "client requested reverse connection: %s; purpose: %s  \"%s\"",
                connection, upgrade, purpose);
 
-    httpd_set_connection_type(raop->httpd, (void *) conn, CONNECTION_TYPE_EVENT);
     int type_PTTH = httpd_count_connection_type(raop->httpd, CONNECTION_TYPE_EVENT);
 
-    if (type_PTTH == 1) {
+    if (type_PTTH == 0) {
         logger_log(raop->logger, LOGGER_DEBUG, "will use socket %d for %s connections", socket_fd, purpose);
         http_response_init(response, "HTTP/1.1", 101, "Switching Protocols");
         http_response_add_header(response, "Connection", "Upgrade");
         http_response_add_header(response, "Upgrade", "PTTH/1.0");
     } else {
         logger_log(raop->logger, LOGGER_ERR, "multiple EVENT (PTTH) connections (%d) are forbidden", type_PTTH );
+        http_response_init(response, "HTTP/1.1", 409, "Conflict");
     }    
 }
 

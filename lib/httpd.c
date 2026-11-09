@@ -517,7 +517,7 @@ httpd_thread(void *arg)
             /* Parse PTTH HTTP response / EVENT message from data read from connection */
                 ret = http_request_add_event_data(connection->request, buffer, (size_t) recv_datalen);
                 if (ret != 0) {
-                    logger_log(httpd->logger, LOGGER_ERR, "httd error in adding event data (too large?)): size = %d", recv_datalen);		  
+                    logger_log(httpd->logger, LOGGER_ERR, "reverse-HTTP frame exceeded the buffer: size = %d", recv_datalen);
                     httpd_remove_connection(httpd, connection, 0);
                     continue;
                 }
@@ -525,7 +525,7 @@ httpd_thread(void *arg)
                 size_t body_len = 0;
                 char *header = NULL;
                 char *body = NULL;
-                while (http_request_parse_event_data(connection->request, &header,  &header_len, &body, &body_len)) {
+                while ((ret = http_request_parse_event_data(connection->request, &header, &header_len, &body, &body_len)) > 0) {
                     if (header) {
                         if (strlen(header) > 8 && !strncmp(header,"HTTP/1.1", 8)) {
                             logger_log(httpd->logger, LOGGER_DEBUG, "<<<<<< reverse-HTTP response:\n%s\n", header);
@@ -545,6 +545,10 @@ httpd_thread(void *arg)
                     if (body) {
                         free (body);
                     }
+                }
+                if (ret < 0) {
+                    logger_log(httpd->logger, LOGGER_ERR, "invalid reverse-HTTP frame");
+                    httpd_remove_connection(httpd, connection, 0);
                 }
                 continue;
             }

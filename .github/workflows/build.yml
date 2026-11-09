@@ -47,10 +47,11 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Verify binary
+      - name: Verify binary and run tests
         run: |
           test -x build/uxplay
           ls -la build/uxplay
+          ctest --test-dir build --output-on-failure
 
   build-macos:
     runs-on: macos-latest

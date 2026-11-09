@@ -251,52 +251,74 @@ http_request_destroy(http_request_t *request)
     }
 }
 
-static size_t
-parse_ptth(const char *data, const size_t datalen, size_t *header_len, size_t *body_len)
+static int
+parse_ptth(const char *data, size_t datalen, size_t *header_offset, size_t *header_len, size_t *body_len)
 {
-    *header_len = 0;
-    *body_len = 0;
-
-    //  skip any leading junk (non-printable ASCII) or whitespace in front of next message
     size_t junk_offset = 0;
-    while (junk_offset < datalen && (data[junk_offset] <= 0x20 || data[junk_offset] == 0x7f)) {
+    while (junk_offset < datalen &&
+           ((unsigned char) data[junk_offset] <= 0x20 || data[junk_offset] == 0x7f)) {
         junk_offset++;
     }
 
-    // Adjust parsing frame past the junk
     const char *actual_data = data + junk_offset;
     size_t actual_datalen = datalen - junk_offset;
 
     const char *header_end = strstr(actual_data, "\r\n\r\n");
     if (!header_end) {
-        return 0; // incomplete headers
+        return 0;
     }
 
     size_t hl = (header_end - actual_data) + 4;
     size_t bl = 0;
 
-    const char *cl_ptr = NULL;
-    for (size_t i = 0; i < hl - 15; i++) {
-        if (strncasecmp(actual_data + i, "Content-Length:", 15) == 0) {
-            cl_ptr = actual_data + i;
-            break;
+    const char *length_field = "Content-Length:";
+    size_t field_len = strlen(length_field);
+    bool have_content_length = false;
+    const char *line_end = strstr(actual_data, "\r\n");
+    while (line_end < header_end) {
+        const char *line = line_end + 2;
+        line_end = strstr(line, "\r\n");
+        size_t line_len = (size_t) (line_end - line);
+        if (line_len < field_len || strncasecmp(line, length_field, field_len) != 0) {
+            continue;
         }
+        if (have_content_length) {
+            return -1;
+        }
+        const char *length = line + field_len;
+        while (length < line_end && (*length == ' ' || *length == '\t')) {
+            length++;
+        }
+        if (length == line_end || *length < '0' || *length > '9') {
+            return -1;
+        }
+        size_t value = 0;
+        while (length < line_end && *length >= '0' && *length <= '9') {
+            size_t digit = (size_t) (*length - '0');
+            if (value > (MAX_EVENT_DATA - 1 - digit) / 10) {
+                return -1;
+            }
+            value = value * 10 + digit;
+            length++;
+        }
+        while (length < line_end && (*length == ' ' || *length == '\t')) {
+            length++;
+        }
+        if (length != line_end || value >= MAX_EVENT_DATA - junk_offset - hl) {
+            return -1;
+        }
+        bl = value;
+        have_content_length = true;
     }
 
-    if (cl_ptr) {
-        bl = (size_t) strtoul(cl_ptr + 15, NULL, 10);
+    if (bl > actual_datalen - hl) {
+        return 0;
     }
 
-    size_t total_msg_len = hl + bl;
-    if (actual_datalen < total_msg_len) {
-        return 0; // incomplete body
-    }
-    
+    *header_offset = junk_offset;
     *header_len = hl;
     *body_len = bl;
-
-    //  (downstream memmove flushes both message + junk)
-    return total_msg_len + junk_offset;
+    return 1;
 }
 
 int
@@ -322,25 +344,22 @@ http_request_add_event_data(http_request_t *request, const char *data, size_t da
     return 0;
 }
 
-// any message returned by parse_event_data must be free'd
-bool http_request_parse_event_data(http_request_t *request, char **header_ptr, size_t *header_len, char **body_ptr, size_t *body_len) {
+int http_request_parse_event_data(http_request_t *request, char **header_ptr, size_t *header_len, char **body_ptr, size_t *body_len) {
     *header_len = 0;
     *body_len = 0;
     *header_ptr = NULL;
     *body_ptr = NULL;
 
-    /* now attempt to parse the reverse-HTTP response, or EVENT message */
-    size_t message_len = parse_ptth(request->data, request->datalen, header_len, body_len);
-    if (!message_len) {
-        return false;
+    size_t header_offset;
+    int result = parse_ptth(request->data, request->datalen, &header_offset, header_len, body_len);
+    if (result <= 0) {
+        return result;
     }
-    assert (request->datalen >= message_len);
-    assert (message_len == *header_len + *body_len);
 
     char *local_header = (char *) malloc(*header_len + 1);
-    if (!local_header) return false;
+    if (!local_header) return -1;
     
-    memcpy(local_header, request->data, *header_len);
+    memcpy(local_header, request->data + header_offset, *header_len);
     local_header[*header_len] = '\0';
 
     char *local_body = NULL;
@@ -348,12 +367,13 @@ bool http_request_parse_event_data(http_request_t *request, char **header_ptr, s
         local_body = (char *) malloc(*body_len + 1);
         if (!local_body) {
             free(local_header);
-            return false;
+            return -1;
         }
-        memcpy(local_body, request->data + *header_len, *body_len);
+        memcpy(local_body, request->data + header_offset + *header_len, *body_len);
         local_body[*body_len] = '\0';
     }
 
+    size_t message_len = header_offset + *header_len + *body_len;
     size_t remaining_len = request->datalen - message_len;    
     if (remaining_len) {
         memmove(request->data, request->data + message_len, remaining_len);
@@ -364,7 +384,7 @@ bool http_request_parse_event_data(http_request_t *request, char **header_ptr, s
     *header_ptr = local_header;
     *body_ptr = local_body;
 
-    return true;
+    return 1;
 }
 
 int http_request_upgrade_data(http_request_t *request)
